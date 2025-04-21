@@ -1483,9 +1483,12 @@ with nav_tabs[2]:
             # Optional track ID input for comparison
             track_id_input = st.text_input(
                 "Enter Track ID for Comparison (Optional)",
-                placeholder="Enter a Track ID to highlight in the comparison",
+                placeholder="Enter a Track ID to highlight in the visualization",
                 help="If provided, this Track ID's value will be highlighted in the visualization"
             )
+            
+            # New search box with autocomplete for matching Track IDs
+            st.markdown("### 🔍 Search for Matching Track IDs")
             
             # Filter data based on selections
             filtered_data = df.copy()
@@ -1862,6 +1865,136 @@ with nav_tabs[2]:
                     st.warning(f"No data found for the selected parameter, grade, and machine combination")
             else:
                 st.warning("No data available for the selected filters")
+                
+                # Add Track ID search functionality with autocomplete
+                if not filtered_data.empty and not all_tracks_data.empty:
+                    st.markdown("### 🔍 Search Track IDs")
+                    st.markdown(f"Find Track IDs for Machine: **{selected_machine if selected_machine != 'All' else 'All'}**, Grade: **{selected_grade if selected_grade != 'All' else 'All'}**, Parameter: **{selected_parameter}**")
+                    
+                    # Get all matching track IDs
+                    matching_track_ids = all_tracks_data['Track'].astype(str).unique().tolist()
+                    
+                    # Search box with autocomplete for Track IDs
+                    track_search = st.text_input(
+                        "Type to search for Track ID",
+                        placeholder="Start typing to see matching Track IDs...",
+                        key="track_search_box",
+                        help="Enter partial or full Track ID to find matches"
+                    )
+                    
+                    if track_search:
+                        # Filter track IDs based on search input
+                        filtered_track_ids = [tid for tid in matching_track_ids if track_search in str(tid)]
+                        
+                        if filtered_track_ids:
+                            # Display the filtered tracks in a selectbox
+                            selected_track = st.selectbox(
+                                "Matching Track IDs",
+                                options=filtered_track_ids,
+                                help="Select a Track ID to view its parameters"
+                            )
+                            
+                            # Show parameters for the selected track
+                            if selected_track:
+                                track_data = df[df['Track'].astype(str) == str(selected_track)]
+                                
+                                if not track_data.empty:
+                                    st.markdown("### 📊 Parameters for Selected Track")
+                                    
+                                    # Get track info
+                                    track_info = track_data.iloc[0]
+                                    
+                                    # Display track info in metrics
+                                    info_cols = st.columns(4)
+                                    
+                                    with info_cols[0]:
+                                        st.metric(
+                                            "Track ID",
+                                            selected_track,
+                                            help="Selected Track ID"
+                                        )
+                                    
+                                    with info_cols[1]:
+                                        st.metric(
+                                            "Jumbo ID",
+                                            track_info['Jumbo_ID'],
+                                            help="Jumbo ID for this track"
+                                        )
+                                    
+                                    with info_cols[2]:
+                                        st.metric(
+                                            "Grade",
+                                            track_info['GRADE'] if 'GRADE' in track_info.index else "N/A",
+                                            help="Grade for this track"
+                                        )
+                                    
+                                    with info_cols[3]:
+                                        st.metric(
+                                            "Quality",
+                                            track_info['Quality'],
+                                            delta="PASS" if track_info['Quality'].upper() == "OK" else "FAIL",
+                                            delta_color="normal" if track_info['Quality'].upper() == "OK" else "inverse",
+                                            help="Quality status for this track"
+                                        )
+                                    
+                                    # Create tabs for parameter groups
+                                    param_tabs = st.tabs(list(parameter_groups.keys()))
+                                    
+                                    for tab, (group_name, parameters) in zip(param_tabs, parameter_groups.items()):
+                                        with tab:
+                                            cols = st.columns(3)
+                                            for idx, param in enumerate(parameters):
+                                                if param in track_data.columns:
+                                                    col_idx = idx % 3
+                                                    with cols[col_idx]:
+                                                        value = track_data[param].iloc[0]
+                                                        # If this is the selected parameter, highlight it
+                                                        is_highlight = param == selected_parameter
+                                                        
+                                                        if is_highlight:
+                                                            st.markdown("**Selected Parameter:**")
+                                                        
+                                                        st.metric(
+                                                            label=param,
+                                                            value=f"{value:.2f}" if isinstance(value, (float, int)) else value,
+                                                            help=f"Parameter: {param}"
+                                                        )
+                                                        
+                                                        if is_highlight:
+                                                            # Show min/max range if available
+                                                            min_val = float(track_data['Min'].iloc[0]) if 'Min' in track_data.columns else None
+                                                            max_val = float(track_data['Max'].iloc[0]) if 'Max' in track_data.columns else None
+                                                            
+                                                            if min_val is not None and max_val is not None:
+                                                                # Check if value is within range
+                                                                try:
+                                                                    val_float = float(value)
+                                                                    in_range = min_val <= val_float <= max_val
+                                                                    
+                                                                    st.markdown(f"""
+                                                                        <div style="padding: 0.5rem; border-radius: 0.5rem; 
+                                                                            background-color: {'rgba(0, 200, 0, 0.1)' if in_range else 'rgba(255, 0, 0, 0.1)'};
+                                                                            border-left: 3px solid {'#00c853' if in_range else '#ff1744'};">
+                                                                            <strong>Range:</strong> {min_val:.2f} - {max_val:.2f}<br>
+                                                                            <strong>Status:</strong> {'Within Range' if in_range else 'Outside Range'}
+                                                                        </div>
+                                                                    """, unsafe_allow_html=True)
+                                                                except:
+                                                                    pass
+                        else:
+                            st.warning(f"No Track IDs found matching '{track_search}'")
+                    else:
+                        # Show a sample of available track IDs
+                        if len(matching_track_ids) > 0:
+                            st.markdown("### Available Track IDs")
+                            sample_size = min(10, len(matching_track_ids))
+                            st.markdown(f"Showing {sample_size} of {len(matching_track_ids)} Track IDs:")
+                            
+                            # Display in a grid
+                            cols = st.columns(5)
+                            for i, track_id in enumerate(matching_track_ids[:sample_size]):
+                                with cols[i % 5]:
+                                    st.markdown(f"**{track_id}**")
                 
     except Exception as e:
         st.error(f"Error creating visualization: {str(e)}")
