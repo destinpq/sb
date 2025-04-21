@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import re
 
 def safe_division(numerator, denominator, default=0.0):
     """Safely perform division with error handling"""
@@ -22,6 +23,11 @@ def get_parameter_ranges(df):
     """Extract parameter-specific ranges from the data"""
     ranges = {}
     
+    # Debug: Print dataframe info before extracting ranges
+    print("DEBUG - get_parameter_ranges called")
+    print(f"DEBUG - DataFrame shape: {df.shape}")
+    print(f"DEBUG - Process_Parameters unique values: {df['Process_Parameters'].unique().tolist()}")
+    
     # First, get ranges from Process_Parameters column
     for index, row in df.iterrows():
         param = row['Process_Parameters']
@@ -31,6 +37,8 @@ def get_parameter_ranges(df):
                 'max': float(row['Max']),
                 'avg': float(row['Average'])
             }
+            # Debug: Print range added
+            print(f"DEBUG - Added range for parameter '{param}': min={ranges[param]['min']}, max={ranges[param]['max']}, avg={ranges[param]['avg']}")
     
     # Add specific ranges for parameters based on domain knowledge
     # CALIPER specific range (example - adjust these values based on actual requirements)
@@ -40,6 +48,7 @@ def get_parameter_ranges(df):
             'max': 300.0,  # Example maximum value for CALIPER
             'avg': 275.0   # Example average value for CALIPER
         }
+        print(f"DEBUG - Added default range for 'CALIPER': min=250.0, max=300.0, avg=275.0")
     
     # Add default ranges for other parameters if needed
     default_ranges = {
@@ -52,6 +61,10 @@ def get_parameter_ranges(df):
     for param, range_values in default_ranges.items():
         if param not in ranges:
             ranges[param] = range_values
+            print(f"DEBUG - Added default range for '{param}': min={range_values['min']}, max={range_values['max']}, avg={range_values['avg']}")
+    
+    # Debug: Print final ranges
+    print(f"DEBUG - Total parameters with ranges: {len(ranges)}")
     
     return ranges
 
@@ -62,23 +75,30 @@ def get_parameter_status(param_value, min_val, max_val):
         min_val = float(min_val)
         max_val = float(max_val)
         
+        # Debug: Print parameter status check
+        print(f"DEBUG - Checking parameter status: value={param_value}, min={min_val}, max={max_val}")
+        
         # Ensure min_val is less than max_val
         if min_val > max_val:
+            print(f"DEBUG - Warning: min_val ({min_val}) > max_val ({max_val}), swapping values")
             min_val, max_val = max_val, min_val
             
         if min_val <= param_value <= max_val:
+            print(f"DEBUG - Parameter PASS: {param_value} in range [{min_val}, {max_val}]")
             return "PASS", 0.0
         
         # Calculate deviation from the nearest boundary
         if param_value < min_val:
             deviation = param_value - min_val
+            print(f"DEBUG - Parameter FAIL_LOW: {param_value} < {min_val}, deviation={deviation}")
             return "FAIL_LOW", deviation
         else:
             deviation = param_value - max_val
+            print(f"DEBUG - Parameter FAIL_HIGH: {param_value} > {max_val}, deviation={deviation}")
             return "FAIL_HIGH", deviation
             
     except (ValueError, TypeError) as e:
-        print(f"Error in get_parameter_status: {e}")
+        print(f"DEBUG - Error in get_parameter_status: {e}")
         return "INVALID", 0.0
 
 def display_parameter_card(label, value, min_val, max_val, process_param=False):
@@ -392,7 +412,13 @@ st.markdown("""
 # Load data with loading indicator
 @st.cache_data(show_spinner=True)
 def load_data():
-    return pd.read_csv("Dummy_PM7_Data_1000_Rows.csv")
+    df = pd.read_csv("Dummy_PM7_Data_1000_Rows.csv")
+    # Debug: Print dataset columns for troubleshooting
+    print("DEBUG - Dataset Columns:", df.columns.tolist())
+    print("DEBUG - Dataset Column Types:")
+    for col in df.columns:
+        print(f"  {col}: {df[col].dtype}")
+    return df
 
 # Define parameter groups with icons - moved outside tabs
 parameter_groups = {
@@ -421,7 +447,7 @@ parameter_groups = {
 }
 
 # Create navigation tabs
-nav_tabs = st.tabs(["📊 Overall Analysis", "🔎 Track ID Search"])
+nav_tabs = st.tabs(["📊 Overall Analysis", "🔎 Track ID Search", "📊 Parameter Comparison"])
 
 # Overall Analysis Tab
 with nav_tabs[0]:
@@ -491,41 +517,15 @@ with nav_tabs[0]:
             fig_col1, fig_col2 = st.columns(2)
             
             with fig_col1:
+                # Pie chart with consistent styling
                 st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-                st.markdown("#### Quality Status Distribution")
+                st.markdown("#### Quality Distribution (Pie Chart)")
                 
-                # Create Altair bar chart with custom colors and consistent styling
+                # Create data for charts
                 status_data = pd.DataFrame({
                     'Status': ['OK', 'NOT OK'],
                     'Count': [ok_count, not_ok_count]
                 })
-                
-                bars = alt.Chart(status_data).mark_bar().encode(
-                    x=alt.X('Status:N', axis=alt.Axis(labelAngle=0), title='Quality Status'),
-                    y=alt.Y('Count:Q', title='Number of Track IDs'),
-                    color=alt.Color('Status:N', scale=alt.Scale(
-                        domain=['OK', 'NOT OK'],
-                        range=['#00c853', '#ff1744']
-                    )),
-                    tooltip=['Status', 'Count']
-                ).properties(
-                    width=chart_width,
-                    height=chart_height
-                )
-                
-                # Apply configuration after rendering
-                bars_configured = bars.configure_view(
-                    strokeWidth=0
-                ).configure_axis(
-                    grid=False
-                )
-                
-                st.altair_chart(bars_configured, use_container_width=False)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                # Pie chart with consistent styling
-                st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-                st.markdown("#### Quality Distribution (Pie Chart)")
                 
                 pie = alt.Chart(status_data).mark_arc().encode(
                     theta=alt.Theta(field="Count", type="quantitative"),
@@ -560,13 +560,14 @@ with nav_tabs[0]:
             # Get all NOT OK rows
             not_ok_rows = df[df['Quality'].str.strip().str.upper() != 'OK']
             
+            # Debug: Print NOT OK rows info
+            print(f"DEBUG - NOT OK Rows Count: {len(not_ok_rows)}")
             if len(not_ok_rows) > 0:
-                # Debug: Show the columns in the dataset
-                st.write("Debug - Dataset Columns:", df.columns.tolist())
-                
+                print(f"DEBUG - NOT OK Quality Values: {not_ok_rows['Quality'].unique().tolist()}")
+            
+            if len(not_ok_rows) > 0:
                 # Get unique Track IDs with NOT OK status
                 not_ok_track_ids = not_ok_rows['Track'].unique()
-                st.write(f"Debug - Found {len(not_ok_track_ids)} unique NOT OK Track IDs")
                 
                 # Get all numeric columns from the dataframe for analysis
                 # Exclude non-parameter columns
@@ -574,7 +575,9 @@ with nav_tabs[0]:
                 numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
                 parameter_columns = [col for col in numeric_columns if col not in exclude_columns]
                 
-                st.write(f"Debug - Found {len(parameter_columns)} potential parameter columns")
+                # Debug: Print parameter columns for troubleshooting
+                print("DEBUG - Numeric Columns:", numeric_columns)
+                print("DEBUG - Parameter Columns:", parameter_columns)
                 
                 # Extract ranges from Process_Parameters column
                 param_ranges = {}
@@ -608,9 +611,7 @@ with nav_tabs[0]:
                                     'avg': avg_val
                                 }
                         except Exception as e:
-                            st.write(f"Debug - Error calculating range for {param}: {str(e)}")
-                
-                st.write(f"Debug - Calculated ranges for {len(param_ranges)} parameters")
+                            pass
                 
                 # Dictionary to store parameter failure counts
                 param_failures = {}
@@ -646,12 +647,7 @@ with nav_tabs[0]:
                                     else:
                                         param_failures[param] = 1
                             except Exception as e:
-                                st.write(f"Debug - Error checking {param} for Track ID {track_id}: {str(e)}")
-                
-                st.write(f"Debug - Found {len(param_failures)} parameters with failures")
-                
-                # Remove debug statements from final version
-                # st.write("Debug - Parameter Failures:", param_failures)
+                                pass
                 
                 # Display parameter failure counts with improved visualization
                 if param_failures:
@@ -706,31 +702,8 @@ with nav_tabs[0]:
                         st.altair_chart(combined_chart, use_container_width=False)
                         st.markdown("</div>", unsafe_allow_html=True)
                     
-                    # Display full table with failure counts
-                    st.markdown("#### Detailed Parameter Failure Analysis")
-                    
                     # Format the percentage column for display
                     failure_data['Failure Percentage'] = failure_data['Failure Percentage'].apply(lambda x: f"{x}%")
-                    
-                    st.dataframe(
-                        failure_data,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Parameter": st.column_config.TextColumn("Process Parameter"),
-                            "Failure Count": st.column_config.NumberColumn(
-                                "Failure Count",
-                                help="Number of NOT OK Track IDs where this parameter failed"
-                            ),
-                            "Failure Percentage": st.column_config.TextColumn(
-                                "% of NOT OK Track IDs",
-                                help="Percentage of NOT OK Track IDs where this parameter failed"
-                            )
-                        }
-                    )
-                    
-                    # Replace the "Most Problematic Parameters" section with "All Parameters Analysis"
-                    st.markdown("#### 🔍 All Parameters Analysis")
                     
                     # Create a container with scrollable height for all parameters
                     with st.container():
@@ -766,9 +739,7 @@ with nav_tabs[0]:
                                         </div>
                                     """, unsafe_allow_html=True)
                     
-                    # Show parameter ranges for all failing parameters
-                    st.markdown("#### Parameter Ranges for Failing Parameters")
-                    
+                    # Calculate ranges but don't display the table
                     range_data = []
                     for param in failure_data['Parameter']:
                         if param in param_ranges:
@@ -780,27 +751,6 @@ with nav_tabs[0]:
                                 'Failure Count': failure_data[failure_data['Parameter'] == param]['Failure Count'].iloc[0],
                                 'Failure %': failure_data[failure_data['Parameter'] == param]['Failure Percentage'].iloc[0]
                             })
-                    
-                    if range_data:
-                        range_df = pd.DataFrame(range_data)
-                        
-                        # Wrap in a container with fixed width to prevent flickering
-                        st.markdown('<div class="parameter-range-table" style="width:100%;">', unsafe_allow_html=True)
-                        st.dataframe(
-                            range_df,
-                            use_container_width=True,
-                            hide_index=True,
-                            height=min(35 * (len(range_data) + 1), 450),  # Fixed height based on number of rows
-                            column_config={
-                                'Parameter': st.column_config.TextColumn("Parameter Name"),
-                                'Min Value': st.column_config.TextColumn("Min Value"),
-                                'Max Value': st.column_config.TextColumn("Max Value"),
-                                'Target Value': st.column_config.TextColumn("Target Value"),
-                                'Failure Count': st.column_config.NumberColumn("Failure Count"),
-                                'Failure %': st.column_config.TextColumn("Failure Percentage")
-                            }
-                        )
-                        st.markdown('</div>', unsafe_allow_html=True)
                 else:
                     st.info("No parameter failures detected in NOT OK Track IDs. This might indicate data inconsistency.")
             else:
@@ -835,22 +785,35 @@ with nav_tabs[1]:
             with search_col2:
                 st.info(f"📍 Detected: {'Track ID' if is_track_id else 'Jumbo ID'}")
             
+            # Debug: Print search criteria
+            print(f"DEBUG - Search Type: {'Track ID' if is_track_id else 'Jumbo ID'}")
+            print(f"DEBUG - Search Value: {search_value}")
+            
             # Filter data with proper type handling
             try:
                 if is_track_id:
                     track_id = int(search_value)
+                    # Debug: Show track ID value types
+                    print(f"DEBUG - Track ID (int): {track_id}")
+                    print(f"DEBUG - Track column type: {df['Track'].dtype}")
+                    print(f"DEBUG - Sample Track values: {df['Track'].head(3).tolist()}")
+                    
                     filtered_df = df[df['Track'].astype(str).str.strip() == str(track_id)]
                 else:
+                    # Debug: Show jumbo ID search
+                    print(f"DEBUG - Jumbo ID: {search_value}")
+                    print(f"DEBUG - Jumbo_ID column type: {df['Jumbo_ID'].dtype}")
+                    print(f"DEBUG - Sample Jumbo_ID values: {df['Jumbo_ID'].head(3).tolist()}")
+                    
                     filtered_df = df[df['Jumbo_ID'].astype(str).str.strip() == search_value.strip()]
+                
+                # Debug: Show filtered results
+                print(f"DEBUG - Filtered records found: {len(filtered_df)}")
                 
                 if not filtered_df.empty:
                     # Grade Status Banner - Fixed to handle exact string matching
                     quality_status = filtered_df['Quality'].iloc[0].strip()  # Remove any whitespace
                     is_ok = quality_status.upper() == "OK"  # Case-insensitive comparison
-                    
-                    # Debug logging
-                    st.write("Debug - Quality Status:", quality_status)
-                    st.write("Debug - Is OK:", is_ok)
                     
                     st.markdown(f"""
                         <div class='grade-status grade-{"ok" if is_ok else "not-ok"} grade-pulse'>
@@ -861,22 +824,182 @@ with nav_tabs[1]:
     
                     # Key metrics with corrected grade status
                     st.markdown("### 📊 Key Metrics")
-                    metric_cols = st.columns(4)
+                    metric_cols = st.columns(5)
                     
                     with metric_cols[0]:
                         delta_color = "normal" if is_ok else "inverse"
                         status_delta = "PASS" if is_ok else "FAIL"
                         st.markdown('<div class="grade-metric">', unsafe_allow_html=True)
                         st.metric(
-                            "Quality Grade",
+                            "Quality",
                             quality_status,
                             delta=status_delta,
                             delta_color=delta_color,
-                            help="Overall quality grade of the product"
+                            help="Overall quality status of the product"
                         )
                         st.markdown('</div>', unsafe_allow_html=True)
                         
                     with metric_cols[1]:
+                        # Get the grade from the GRADE column
+                        grade_value = "N/A"
+                        grade_found = False
+                        
+                        # Get Quality value to avoid confusion
+                        quality_value = filtered_df['Quality'].iloc[0]
+                        if pd.notna(quality_value):
+                            quality_value = str(quality_value).strip().upper()
+                        else:
+                            quality_value = ""
+                            
+                        print(f"DEBUG - Quality value is: {quality_value}")
+                        
+                        # Debug - print all column names to check for GRADE column
+                        print(f"DEBUG - All columns in filtered_df: {filtered_df.columns.tolist()}")
+                        
+                        # Debug - print the entire first 2 rows to inspect all column values
+                        for idx, row in filtered_df.head(2).iterrows():
+                            print(f"DEBUG - Row {idx} data:")
+                            for col, val in row.items():
+                                print(f"  {col}: {val}")
+                        
+                        # Check for the GRADE column directly 
+                        if 'GRADE' in filtered_df.columns:
+                            print(f"DEBUG - Found exact GRADE column")
+                            # Add debug to show the actual values in the GRADE column
+                            print(f"DEBUG - GRADE column values (first 5): {filtered_df['GRADE'].head(5).tolist()}")
+                            print(f"DEBUG - GRADE column dtype: {filtered_df['GRADE'].dtype}")
+                            grade_val = filtered_df['GRADE'].iloc[0]
+                            if pd.notna(grade_val) and str(grade_val).strip():
+                                grade_value = str(grade_val).strip().upper()
+                                grade_found = True
+                                print(f"DEBUG - Using value from GRADE column: {grade_value}")
+                            else:
+                                print(f"DEBUG - GRADE column exists but value is empty or NaN")
+                        
+                        # Check if there's a case-insensitive match for 'grade'
+                        grade_cols = [col for col in filtered_df.columns if col.upper() == 'GRADE']
+                        
+                        # Also check for common typos and variations
+                        typo_variations = ['GRAD', 'GRADES', 'GREADE', 'GARDE']
+                        for variation in typo_variations:
+                            typo_cols = [col for col in filtered_df.columns if variation in col.upper()]
+                            if typo_cols:
+                                grade_cols.extend(typo_cols)
+                                print(f"DEBUG - Found possible typo variation: {typo_cols}")
+                        
+                        # Check for fuzzy matches
+                        for col in filtered_df.columns:
+                            if 'GRA' in col.upper() and 'DE' in col.upper():
+                                if col not in grade_cols:
+                                    grade_cols.append(col)
+                                    print(f"DEBUG - Found fuzzy match: {col}")
+                        
+                        # Debug - print all potential grade columns found
+                        print(f"DEBUG - All identified potential grade columns: {grade_cols}")
+                        
+                        if grade_cols and not grade_found:
+                            print(f"DEBUG - Found case variation of GRADE: {grade_cols[0]}")
+                            # Add debug to show values in this column
+                            print(f"DEBUG - Column '{grade_cols[0]}' values (first 5): {filtered_df[grade_cols[0]].head(5).tolist()}")
+                            print(f"DEBUG - Column '{grade_cols[0]}' dtype: {filtered_df[grade_cols[0]].dtype}")
+                            grade_val = filtered_df[grade_cols[0]].iloc[0]
+                            if pd.notna(grade_val) and str(grade_val).strip():
+                                grade_value = str(grade_val).strip().upper()
+                                grade_found = True
+                                print(f"DEBUG - Using value from {grade_cols[0]} column: {grade_value}")
+                        
+                        # Define pattern for FILOPACK 255 format
+                        grade_pattern = re.compile(r'([A-Za-z]+\s*PACK\s*\d+)', re.IGNORECASE)
+                        
+                        # If grade not found, use pattern matching as fallback
+                        if not grade_found:
+                            print(f"DEBUG - Grade not found in standard columns, searching with pattern: {grade_pattern.pattern}")
+                            # Search for the pattern in all columns
+                            for col in filtered_df.columns:
+                                try:
+                                    val = str(filtered_df[col].iloc[0])
+                                    # Skip if this is exactly the Quality column
+                                    if col == 'Quality':
+                                        continue
+                                    
+                                    # Debug - show columns with FILO or PACK in them
+                                    if "FILO" in val.upper() or "PACK" in val.upper():
+                                        print(f"DEBUG - Column {col} contains FILO/PACK: {val}")
+                                        
+                                    match = grade_pattern.search(val)
+                                    if match:
+                                        potential_grade = match.group(1).strip().upper()
+                                        # Make sure this isn't the Quality value
+                                        if potential_grade != quality_value:
+                                            grade_value = potential_grade
+                                            grade_found = True
+                                            print(f"DEBUG - Found FILOPACK pattern in {col}: {grade_value}")
+                                            break
+                                except Exception as e:
+                                    print(f"DEBUG - Error processing column {col}: {str(e)}")
+                        
+                        # If not found yet, try comma-separated values
+                        if not grade_found:
+                            for col in filtered_df.columns:
+                                try:
+                                    val = str(filtered_df[col].iloc[0])
+                                    if "," in val:
+                                        parts = val.split(",")
+                                        for part in parts:
+                                            match = grade_pattern.search(part)
+                                            if match:
+                                                potential_grade = match.group(1).strip().upper()
+                                                # Make sure this isn't the Quality value
+                                                if potential_grade != quality_value:
+                                                    grade_value = potential_grade
+                                                    grade_found = True
+                                                    print(f"DEBUG - Found FILOPACK pattern in {col} part: {grade_value}")
+                                                    break
+                                        if grade_found:
+                                            break
+                                except Exception as e:
+                                    print(f"DEBUG - Error processing comma-separated values in {col}: {str(e)}")
+                        
+                        # As absolute fallback, search for FILOPACK anywhere
+                        if not grade_found:
+                            for col in filtered_df.columns:
+                                try:
+                                    val = str(filtered_df[col].iloc[0])
+                                    if "FILOPACK" in val.upper().replace(" ", "") or "FILO PACK" in val.upper():
+                                        # Try to extract just the FILOPACK part
+                                        words = val.upper().split()
+                                        for i, word in enumerate(words):
+                                            if "FILO" in word or "PACK" in word:
+                                                # Try to get the word plus the next one if it exists
+                                                if i+1 < len(words) and words[i+1].isdigit():
+                                                    grade_value = f"{word} {words[i+1]}"
+                                                    grade_found = True
+                                                    print(f"DEBUG - Found FILO/PACK word pattern: {grade_value}")
+                                                    break
+                                        
+                                        # If still not found, just use the whole value
+                                        if not grade_found:
+                                            grade_value = val.strip().upper()
+                                            grade_found = True
+                                            print(f"DEBUG - Using full value containing FILOPACK: {grade_value}")
+                                        break
+                                except Exception as e:
+                                    print(f"DEBUG - Error processing FILOPACK search in {col}: {str(e)}")
+                        
+                        # Make sure we aren't using Quality value as Grade
+                        if grade_value == quality_value or "NOT OK" in grade_value or "OK" == grade_value:
+                            print(f"DEBUG - Rejected grade value '{grade_value}' because it matches quality info")
+                            print(f"DEBUG - Quality value: '{quality_value}'")
+                            print(f"DEBUG - Rejection reason: {'grade=quality' if grade_value == quality_value else 'contains NOT OK' if 'NOT OK' in grade_value else 'is just OK'}")
+                            grade_value = "N/A"
+                        
+                        st.metric(
+                            "GRADE",
+                            grade_value,
+                            help="Product grade classification (e.g., FILOPACK 255)"
+                        )
+                        
+                    with metric_cols[2]:
                         success_rate = 100.0 if is_ok else 0.0
                         st.metric(
                             "Success Rate",
@@ -886,14 +1009,14 @@ with nav_tabs[1]:
                             help="Percentage of successful quality checks"
                         )
                         
-                    with metric_cols[2]:
+                    with metric_cols[3]:
                         st.metric(
                             "KIT Number",
                             filtered_df['KIT'].iloc[0],
                             help="Product identification number"
                         )
                         
-                    with metric_cols[3]:
+                    with metric_cols[4]:
                         st.metric(
                             "Total Records",
                             len(filtered_df),
@@ -905,6 +1028,16 @@ with nav_tabs[1]:
     
                     # Parameters display in tabs
                     st.markdown("### 📑 Detailed Parameters")
+                    
+                    # Debug: Print parameter groups and their columns
+                    for group_name, parameters in parameter_groups.items():
+                        available_params = [p for p in parameters if p in filtered_df.columns]
+                        missing_params = [p for p in parameters if p not in filtered_df.columns]
+                        print(f"DEBUG - Parameter Group '{group_name}':")
+                        print(f"  Available parameters: {available_params}")
+                        if missing_params:
+                            print(f"  Missing parameters: {missing_params}")
+                    
                     tabs = st.tabs(list(parameter_groups.keys()))
                     
                     for tab, (group_name, parameters) in zip(tabs, parameter_groups.items()):
@@ -927,9 +1060,18 @@ with nav_tabs[1]:
                         # Get all parameter ranges
                         parameter_ranges = get_parameter_ranges(df)
                         
+                        # Debug: Print parameter ranges
+                        print("DEBUG - Parameter Ranges from get_parameter_ranges:")
+                        for param, range_data in parameter_ranges.items():
+                            print(f"  {param}: min={range_data['min']}, max={range_data['max']}, avg={range_data['avg']}")
+                        
                         # Get current process parameter
                         process_params = filtered_df[['Process_Parameters', 'Min', 'Max', 'Average']].iloc[0]
                         current_process = str(process_params['Process_Parameters'])
+                        
+                        # Debug: Print current process parameter details
+                        print(f"DEBUG - Current Process Parameter: {current_process}")
+                        print(f"DEBUG - Min: {process_params['Min']}, Max: {process_params['Max']}, Avg: {process_params['Average']}")
                         
                         # Display process parameter status with enhanced visibility
                         param_name = current_process
@@ -1242,6 +1384,488 @@ with nav_tabs[1]:
         st.info("Please check your data and try again.")
 
 # End of Track ID Search tab
+
+# Parameter Comparison Tab
+with nav_tabs[2]:
+    st.markdown("### 📊 Process Parameter Comparison")
+    st.markdown("Compare process parameter values across tracks, with min/max range visualization")
+    
+    try:
+        with st.spinner('Loading data...'):
+            df = load_data()
+            
+            # Extract unique values for filters
+            process_parameters = sorted(df['Process_Parameters'].unique().tolist())
+            
+            # Determine grade and machine columns
+            # Using GRADE for grade and M_C for machine
+            grade_column = 'GRADE'
+            machine_column = 'M_C'
+            
+            # Extract unique grades with special handling
+            grades = []
+            # First try to get grades from the GRADE column if it exists
+            if grade_column in df.columns:
+                grades = df[grade_column].dropna().unique().tolist()
+                
+            # If no grades found, try to extract from other columns
+            if not grades:
+                print("DEBUG - No grades found in GRADE column, looking in other columns")
+                grade_values = set()
+                
+                # Look for common grade patterns in string columns
+                for col in df.columns:
+                    try:
+                        # Check first few values
+                        for val in df[col].head(100).values:
+                            if pd.notna(val) and isinstance(val, str):
+                                # Look for words followed by numbers - common in grade designations
+                                # For example "PACK 255", "GRADE A", etc.
+                                val_str = str(val).strip()
+                                # Check for patterns like "WORD NUMBER" or text containing "PACK"
+                                if ("PACK" in val_str.upper() or "GRADE" in val_str.upper() or 
+                                    re.search(r'\b[A-Za-z]+\s+\d+\b', val_str)):
+                                    grade_values.add(val_str.upper())  # Convert to uppercase
+                    except:
+                        pass
+                
+                # Also check for comma-separated values in string columns
+                for col in df.columns:
+                    try:
+                        # Check first few values
+                        for val in df[col].head(100).values:
+                            if pd.notna(val) and isinstance(val, str) and "," in val:
+                                parts = val.split(",")
+                                if len(parts) >= 7:  # Based on the screenshot format
+                                    # Last part is often the grade
+                                    potential_grade = parts[-1].strip()
+                                    # Grade often contains words like "PACK" or follows pattern of words and numbers
+                                    if (len(potential_grade.split()) >= 2 or "PACK" in potential_grade.upper() or
+                                        re.search(r'\b[A-Za-z]+\s+\d+\b', potential_grade)):
+                                        grade_values.add(potential_grade.upper())  # Convert to uppercase
+                    except:
+                        pass
+                
+                grades = sorted(list(grade_values))
+                print(f"DEBUG - Found {len(grades)} potential grade values")
+                print(f"DEBUG - Raw grade values before sorting/processing: {list(grade_values)}")
+            
+            # Sort grades and ensure they're strings
+            grades = sorted([str(g).strip().upper() for g in grades if pd.notna(g)])  # Convert to uppercase
+            print(f"DEBUG - Final grades list: {grades}")
+            
+            machines = sorted(df[machine_column].dropna().unique().tolist())
+            
+            # Create filter widgets
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                selected_parameter = st.selectbox(
+                    "Select Process Parameter",
+                    options=process_parameters,
+                    help="Choose the process parameter to analyze"
+                )
+            
+            with col2:
+                selected_grade = st.selectbox(
+                    "Select Grade",
+                    options=["All"] + grades,
+                    help="Filter by product grade"
+                )
+            
+            with col3:
+                selected_machine = st.selectbox(
+                    "Select Machine",
+                    options=["All"] + machines,
+                    help="Filter by machine"
+                )
+            
+            # Optional track ID input for comparison
+            track_id_input = st.text_input(
+                "Enter Track ID for Comparison (Optional)",
+                placeholder="Enter a Track ID to highlight in the comparison",
+                help="If provided, this Track ID's value will be highlighted in the visualization"
+            )
+            
+            # Filter data based on selections
+            filtered_data = df.copy()
+            
+            # Filter by parameter
+            filtered_data = filtered_data[filtered_data['Process_Parameters'] == selected_parameter]
+            
+            # Filter by grade if not "All"
+            if selected_grade != "All":
+                # Try to match in GRADE column first
+                if grade_column in filtered_data.columns:
+                    grade_mask = filtered_data[grade_column].astype(str).str.strip().str.upper() == selected_grade.upper()
+                    filtered_data = filtered_data[grade_mask]
+                    
+                    # If no matches, try looking in other columns
+                    if filtered_data.empty:
+                        print(f"DEBUG - No tracks found with {grade_column}='{selected_grade}', looking in other columns")
+                        filtered_rows = []
+                        
+                        # Check all columns for the grade value
+                        for _, row in filtered_data.iterrows():
+                            found = False
+                            for col in row.index:
+                                val = row[col]
+                                if pd.notna(val) and isinstance(val, str):
+                                    # Direct match - case insensitive
+                                    if selected_grade.upper() in val.upper():
+                                        filtered_rows.append(row)
+                                        found = True
+                                        break
+                                    # Split and check if comma-separated
+                                    if "," in val:
+                                        parts = val.split(",")
+                                        # Check if the last part looks like the selected grade
+                                        if len(parts) >= 7 and (selected_grade.upper() in parts[-1].upper() or 
+                                                             any(selected_grade.upper() in part.upper() for part in parts)):
+                                            filtered_rows.append(row)
+                                            found = True
+                                            break
+                            if found:
+                                break
+                        
+                        if filtered_rows:
+                            filtered_data = pd.DataFrame(filtered_rows)
+                
+                else:
+                    # If GRADE column doesn't exist, search in string columns
+                    filtered_rows = []
+                    
+                    # Check all columns for the grade value
+                    for _, row in filtered_data.iterrows():
+                        found = False
+                        for col in row.index:
+                            val = row[col]
+                            if pd.notna(val) and isinstance(val, str):
+                                # Direct match - case insensitive
+                                if selected_grade.upper() in val.upper():
+                                    filtered_rows.append(row)
+                                    found = True
+                                    break
+                                # Split and check if comma-separated
+                                if "," in val:
+                                    parts = val.split(",")
+                                    # Check if the last part looks like the selected grade - case insensitive
+                                    if len(parts) >= 7 and (selected_grade.upper() in parts[-1].upper() or 
+                                                         any(selected_grade.upper() in part.upper() for part in parts)):
+                                        filtered_rows.append(row)
+                                        found = True
+                                        break
+                        if found:
+                            break
+                    
+                    if filtered_rows:
+                        filtered_data = pd.DataFrame(filtered_rows)
+            
+            # Filter by machine if not "All"
+            if selected_machine != "All":
+                filtered_data = filtered_data[filtered_data[machine_column] == selected_machine]
+            
+            # Get the min and max values for the selected parameter
+            if not filtered_data.empty:
+                param_min = float(filtered_data['Min'].iloc[0])
+                param_max = float(filtered_data['Max'].iloc[0])
+                param_avg = float(filtered_data['Average'].iloc[0])
+                
+                # Get all tracks with this parameter
+                all_tracks_data = df[df['Process_Parameters'] == selected_parameter]
+                
+                # Filter tracks by grade if not "All"
+                if selected_grade != "All":
+                    # Try to match in GRADE column first
+                    if grade_column in all_tracks_data.columns:
+                        grade_mask = all_tracks_data[grade_column].astype(str).str.strip().str.upper() == selected_grade.upper()
+                        filtered_tracks = all_tracks_data[grade_mask]
+                        
+                        # If no matches, try looking in other columns
+                        if filtered_tracks.empty:
+                            print(f"DEBUG - No tracks found with {grade_column}='{selected_grade}', looking in other columns")
+                            filtered_rows = []
+                            
+                            # Check all columns for the grade value
+                            for _, row in all_tracks_data.iterrows():
+                                found = False
+                                for col in row.index:
+                                    val = row[col]
+                                    if pd.notna(val) and isinstance(val, str):
+                                        # Direct match - case insensitive
+                                        if selected_grade.upper() in val.upper():
+                                            filtered_rows.append(row)
+                                            found = True
+                                            break
+                                        # Split and check if comma-separated
+                                        if "," in val:
+                                            parts = val.split(",")
+                                            # Check if the last part looks like the selected grade - case insensitive
+                                            if len(parts) >= 7 and (selected_grade.upper() in parts[-1].upper() or 
+                                                                 any(selected_grade.upper() in part.upper() for part in parts)):
+                                                filtered_rows.append(row)
+                                                found = True
+                                                break
+                                if found:
+                                    break
+                            
+                            if filtered_rows:
+                                filtered_tracks = pd.DataFrame(filtered_rows)
+                            else:
+                                # If still no matches, keep the original filter
+                                filtered_tracks = all_tracks_data
+                        
+                        all_tracks_data = filtered_tracks
+                    else:
+                        # If GRADE column doesn't exist, search in string columns
+                        filtered_rows = []
+                        
+                        # Check all columns for the grade value
+                        for _, row in all_tracks_data.iterrows():
+                            found = False
+                            for col in row.index:
+                                val = row[col]
+                                if pd.notna(val) and isinstance(val, str):
+                                    # Direct match - case insensitive
+                                    if selected_grade.upper() in val.upper():
+                                        filtered_rows.append(row)
+                                        found = True
+                                        break
+                                    # Split and check if comma-separated
+                                    if "," in val:
+                                        parts = val.split(",")
+                                        # Check if the last part looks like the selected grade - case insensitive
+                                        if len(parts) >= 7 and (selected_grade.upper() in parts[-1].upper() or 
+                                                             any(selected_grade.upper() in part.upper() for part in parts)):
+                                            filtered_rows.append(row)
+                                            found = True
+                                            break
+                            if found:
+                                break
+                        
+                        if filtered_rows:
+                            all_tracks_data = pd.DataFrame(filtered_rows)
+                
+                # Filter tracks by machine if not "All"
+                if selected_machine != "All":
+                    all_tracks_data = all_tracks_data[all_tracks_data[machine_column] == selected_machine]
+                
+                # Get all unique Track IDs for the filtered criteria
+                track_ids = all_tracks_data['Track'].unique()
+                
+                # Create a dataframe with parameter values for these tracks
+                track_values = []
+                for track in track_ids:
+                    try:
+                        track_data = df[df['Track'] == track]
+                        if selected_parameter in track_data.columns:
+                            value = track_data[selected_parameter].iloc[0]
+                            if pd.notna(value):
+                                try:
+                                    # Ensure value is converted to float
+                                    float_value = float(value)
+                                    # Ensure min/max are floats
+                                    min_val = float(param_min)
+                                    max_val = float(param_max)
+                                    status = "Within Range" if min_val <= float_value <= max_val else "Outside Range"
+                                    track_values.append({
+                                        'Track': track,
+                                        'Value': float_value,
+                                        'Status': status
+                                    })
+                                except (ValueError, TypeError):
+                                    # Skip values that can't be converted to float
+                                    print(f"DEBUG - Skipping value '{value}' for Track {track} that can't be converted to float")
+                                    continue
+                    except Exception as e:
+                        print(f"DEBUG - Error processing Track {track}: {str(e)}")
+                        continue
+                
+                if track_values:
+                    # Convert to dataframe for plotting
+                    track_values_df = pd.DataFrame(track_values)
+                    
+                    # Check if selected track ID exists
+                    selected_track_value = None
+                    if track_id_input and track_id_input.isdigit():
+                        try:
+                            track_id = int(track_id_input)
+                            track_row = track_values_df[track_values_df['Track'] == track_id]
+                            if not track_row.empty:
+                                selected_track_value = float(track_row['Value'].iloc[0])
+                                st.markdown(f"#### Selected Track ID: {track_id}")
+                                
+                                # Calculate deviation from min/max/avg
+                                if selected_track_value < param_min:
+                                    deviation = selected_track_value - param_min
+                                    status = "BELOW Range"
+                                elif selected_track_value > param_max:
+                                    deviation = selected_track_value - param_max
+                                    status = "ABOVE Range"
+                                else:
+                                    deviation = 0
+                                    status = "Within Range"
+                                
+                                # Display selected track's information
+                                st.markdown(f"""
+                                    <div style="
+                                        padding: 1rem;
+                                        border-radius: 10px;
+                                        margin: 1rem 0;
+                                        background: {"rgba(0, 200, 0, 0.1)" if status == "Within Range" else "rgba(255, 0, 0, 0.1)"};
+                                        border-left: 4px solid {"#00c853" if status == "Within Range" else "#ff1744"};
+                                    ">
+                                        <div style="display: flex; justify-content: space-between;">
+                                            <div>
+                                                <h4 style="margin: 0;">Track ID: {track_id}</h4>
+                                                <p>Parameter: <strong>{selected_parameter}</strong></p>
+                                                <p>Value: <strong>{selected_track_value:.2f}</strong></p>
+                                            </div>
+                                            <div style="text-align: right;">
+                                                <p>Min: <strong>{param_min:.2f}</strong></p>
+                                                <p>Max: <strong>{param_max:.2f}</strong></p>
+                                                <p>Status: <strong>{status}</strong></p>
+                                                <p>Deviation: <strong>{deviation:+.2f}</strong></p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            else:
+                                st.warning(f"Track ID {track_id_input} not found in the filtered data")
+                        except Exception as e:
+                            st.warning(f"Error processing Track ID: {str(e)}")
+                    
+                    # Create visualization using Altair
+                    import altair as alt
+                    
+                    # Title for the chart
+                    st.markdown(f"#### Distribution of {selected_parameter} Values")
+                    st.markdown(f"Min: {param_min:.2f} | Max: {param_max:.2f} | Target: {param_avg:.2f}")
+                    
+                    try:
+                        # Ensure all values in the dataframe are the correct types
+                        track_values_df['Value'] = track_values_df['Value'].astype(float)
+                        track_values_df['Track'] = track_values_df['Track'].astype(str)
+                        
+                        # Create a box plot using Altair
+                        base = alt.Chart(track_values_df).encode(
+                            x=alt.X('Value:Q', title=f'{selected_parameter} Value'),
+                            color=alt.Color('Status:N', 
+                                           scale=alt.Scale(
+                                               domain=['Within Range', 'Outside Range'],
+                                               range=['#00c853', '#ff1744']
+                                           ))
+                        )
+                        
+                        # Box plot
+                        box_plot = base.mark_boxplot(size=50).encode(
+                            y=alt.Y('Status:N', axis=None)
+                        )
+                        
+                        # Points for all values
+                        points = base.mark_circle(opacity=0.5).encode(
+                            y=alt.Y('jitter:Q', title=None),
+                            tooltip=['Track:N', 'Value:Q', 'Status:N']
+                        ).transform_calculate(
+                            # Generate jitter values for the y-axis
+                            jitter='random() * 0.5'
+                        )
+                        
+                        # Min and max reference lines
+                        min_rule = alt.Chart(pd.DataFrame({'Value': [float(param_min)]})).mark_rule(
+                            color='blue', strokeDash=[5, 5]
+                        ).encode(x='Value:Q')
+                        
+                        max_rule = alt.Chart(pd.DataFrame({'Value': [float(param_max)]})).mark_rule(
+                            color='blue', strokeDash=[5, 5]
+                        ).encode(x='Value:Q')
+                        
+                        avg_rule = alt.Chart(pd.DataFrame({'Value': [float(param_avg)]})).mark_rule(
+                            color='green'
+                        ).encode(x='Value:Q')
+                        
+                        # Highlight selected track ID if provided
+                        highlight = None
+                        if selected_track_value is not None:
+                            highlight = alt.Chart(pd.DataFrame({'Value': [float(selected_track_value)]})).mark_rule(
+                                color='orange', size=3
+                            ).encode(x='Value:Q')
+                        
+                        # Combine all elements
+                        combined_chart = alt.layer(
+                            box_plot, points, min_rule, max_rule, avg_rule,
+                            *([] if highlight is None else [highlight])
+                        ).properties(
+                            width=700,
+                            height=300
+                        ).configure_axis(
+                            labelFontSize=12,
+                            titleFontSize=14
+                        )
+                        
+                        # Display the chart
+                        st.altair_chart(combined_chart, use_container_width=True)
+                        
+                        # Additional statistics
+                        st.markdown("#### Distribution Statistics")
+                        
+                        stats_cols = st.columns(5)
+                        with stats_cols[0]:
+                            st.metric("Count", len(track_values_df))
+                            
+                        with stats_cols[1]:
+                            st.metric("Average", f"{track_values_df['Value'].mean():.2f}")
+                            
+                        with stats_cols[2]:
+                            st.metric("Median", f"{track_values_df['Value'].median():.2f}")
+                            
+                        with stats_cols[3]:
+                            within_range = sum(track_values_df['Status'] == 'Within Range')
+                            st.metric(
+                                "Within Range", 
+                                f"{within_range} ({within_range/len(track_values_df):.1%})"
+                            )
+                            
+                        with stats_cols[4]:
+                            outside_range = sum(track_values_df['Status'] == 'Outside Range')
+                            st.metric(
+                                "Outside Range", 
+                                f"{outside_range} ({outside_range/len(track_values_df):.1%})"
+                            )
+                            
+                        # Show data table (collapsible)
+                        with st.expander("View Data Table"):
+                            st.dataframe(
+                                track_values_df.sort_values('Value'),
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "Track": st.column_config.NumberColumn("Track ID"),
+                                    "Value": st.column_config.NumberColumn(f"{selected_parameter} Value", format="%.2f"),
+                                    "Status": st.column_config.TextColumn("Status")
+                                }
+                            )
+                    except Exception as e:
+                        st.error(f"Error creating visualization: {str(e)}")
+                        st.info("Please check that all selected parameter values can be properly converted to numbers.")
+                        print(f"DEBUG - Visualization error details: {str(e)}")
+                        
+                        # Display the raw data for debugging
+                        st.markdown("### Data Preview (Debug)")
+                        st.write("This table shows the raw data being used for visualization:")
+                        st.dataframe(
+                            track_values_df,
+                            use_container_width=True,
+                            hide_index=False
+                        )
+                else:
+                    st.warning(f"No data found for the selected parameter, grade, and machine combination")
+            else:
+                st.warning("No data available for the selected filters")
+                
+    except Exception as e:
+        st.error(f"Error creating visualization: {str(e)}")
+        st.info("Please check your data and try again.")
 
 # Footer with additional information
 st.markdown("---")
